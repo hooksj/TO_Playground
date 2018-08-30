@@ -423,22 +423,21 @@ class Structure(object):
 
         # Constrain first and last limb position to be equal to initial position and the remainder to be within a bounded box from
         # the nominal foot position
-        search_boundary = 0.02
         self.x_L[self.wf1_index:self.wf2_index] = self.x_U[self.wf1_index:self.wf2_index] = self.F1[:,:2].reshape(int(len(self.F1))*2)
-        self.x_L[self.wf1_index+2:self.wf1_index+4] -= ones(2)*search_boundary
-        self.x_U[self.wf1_index+2:self.wf1_index+4] += ones(2)*search_boundary
+        self.x_L[self.wf1_index+2:self.wf1_index+4] -= ones(2)*0.01
+        self.x_U[self.wf1_index+2:self.wf1_index+4] += ones(2)*0.01
 
         self.x_L[self.wf2_index:self.wf3_index] = self.x_U[self.wf2_index:self.wf3_index] = self.F2[:,:2].reshape(int(len(self.F2))*2)
-        self.x_L[self.wf2_index+2:self.wf2_index+4] -= ones(2)*search_boundary
-        self.x_U[self.wf2_index+2:self.wf2_index+4] += ones(2)*search_boundary
+        self.x_L[self.wf2_index+2:self.wf2_index+4] -= ones(2)*0.01
+        self.x_U[self.wf2_index+2:self.wf2_index+4] += ones(2)*0.01
 
         self.x_L[self.wf3_index:self.wf4_index] = self.x_U[self.wf3_index:self.wf4_index] = self.F3[:,:2].reshape(int(len(self.F3))*2)
-        self.x_L[self.wf3_index+2:self.wf3_index+4] -= ones(2)*search_boundary
-        self.x_U[self.wf3_index+2:self.wf3_index+4] += ones(2)*search_boundary
+        self.x_L[self.wf3_index+2:self.wf3_index+4] -= ones(2)*0.01
+        self.x_U[self.wf3_index+2:self.wf3_index+4] += ones(2)*0.01
 
         self.x_L[self.wf4_index:] = self.x_U[self.wf4_index:] = self.F4[:,:2].reshape(int(len(self.F4))*2)
-        self.x_L[self.wf4_index+2:self.wf4_index+4] -= ones(2)*search_boundary
-        self.x_U[self.wf4_index+2:self.wf4_index+4] += ones(2)*search_boundary
+        self.x_L[self.wf4_index+2:self.wf4_index+4] -= ones(2)*0.01
+        self.x_U[self.wf4_index+2:self.wf4_index+4] += ones(2)*0.01
 
         """
         self.x_L[self.wf1_index:self.wf1_index+2] = self.F1[0,:2]
