@@ -36,6 +36,7 @@ __status__ 		= "Prototype"
 import pyipopt
 import matplotlib.pyplot as plt
 from numpy import *
+from scipy.sparse import coo_matrix, csr_matrix
 import pdb
 import time
 
@@ -49,14 +50,12 @@ def solve (p):
     P = p
     t0 = time.time()
 
-    eval_f(P.x)
-    eval_grad_f(P.x)
-    eval_g(P.x)
-    eval_jac_g(P.x, True)
-    eval_jac_g(P.x, False)
+    test3 = eval_h(P.x, ones(1000), 1.0, False)
+    test1, test2 = eval_h(P.x, ones(1000), 1.0, True)
+    pdb.set_trace()
 
     # Create the problem for Ipopt to solve
-    nlp = pyipopt.create(P.nvar, P.x_L, P.x_U, P.ncon, P.g_L, P.g_U, P.nnjz, P.nnzh, eval_f, eval_grad_f, eval_g, eval_jac_g)
+    nlp = pyipopt.create(P.nvar, P.x_L, P.x_U, P.ncon, P.g_L, P.g_U, P.nnjz, P.nnzh, eval_f, eval_grad_f, eval_g, eval_jac_g, eval_h)
 
     # Set Ipopt solve options
     nlp.int_option("print_level",1)
@@ -65,7 +64,7 @@ def solve (p):
     nlp.num_option("dual_inf_tol",10000.0)
     nlp.num_option("compl_inf_tol",10000.0)
     nlp.int_option("max_iter", 10000)
-    #nlp.str_option("derivative_test","first-order")
+    nlp.str_option("derivative_test","only-second-order")
 
     print "Calling solve"
 
@@ -327,4 +326,86 @@ def eval_jac_g(x, flag, user_data = None):
             t = round(t+t_bar,6)
 
         return values
+
+
+def eval_h(x, lagrange, obj_factor, flag, user_data = None):
+
+    P.x = x
+
+    if flag:
+        pdb.set_trace()
+        hrow = zeros(P.nnzh, int)
+        hcol = zeros(P.nnzh, int)
+        for i in range(P.nnzh):
+            hrow[i] = P.Hessian.row[i]
+            hcol[i] = P.Hessian.col[i]
+        #return (P.Hessian.row, P.Hessian.col)
+        return (hrow, hcol)
+    else:
+
+        row = zeros((2*P.np+1)*(P.ACost.nnzh + P.LCost.nnzh), dtype=int)
+        col = zeros((2*P.np+1)*(P.ACost.nnzh + P.LCost.nnzh), dtype=int)
+        data = zeros((2*P.np+1)*(P.ACost.nnzh + P.LCost.nnzh), float_)
+
+        t = 0.0
+        tk = 0.0
+        index = 0
+
+
+        for i in range(2*P.np+1):
+            _, C, _ = P.curr_f(t)
+            a_x, a_y, da_x, da_y = P.curr_a(t)
+            lam, dlam = P.curr_lam(t)
+
+            if t >= round(tk + P.tp,6):
+                    tk = round(tk + P.tp,6)
+
+            tb = t-tk
+
+            row[index:index+P.ACost.nnzh], col[index:index+P.ACost.nnzh], data[index:index+P.ACost.nnzh] = P.ACost.hessian(da_x, da_y, tb, obj_factor)
+            index += P.ACost.nnzh
+
+            row[index:index+P.LCost.nnzh], col[index:index+P.LCost.nnzh], data[index:index+P.LCost.nnzh] = P.LCost.hessian(dlam, obj_factor)
+            index += P.LCost.nnzh
+
+
+            t = round(t+P.tp/2.0,6)
+
+        H = coo_matrix((data, (row,col)), shape=(P.nvar, P.nvar))
+
+        index = 0
+        t = 0.0
+        for j in range(P.np-1):
+            F, C, dF = P.curr_f(t)
+            lam, dlam = P.curr_lam(t)
+            h, ddh = P.curr_h(t)
+
+            H += P.DCon.hessian(dlam, dF, C, lagrange[index:index+2], h, ddh)
+            index += 2
+
+
+            t_bar = round(P.tp/2.0,6)
+            t = round(t+t_bar,6)
+            F, C, dF = P.curr_f(t)
+            lam, dlam = P.curr_lam(t)
+            h, ddh = P.curr_h(t)
+
+            H += P.DCon.hessian(dlam, dF, C, lagrange[index:index+2], h, ddh)
+            index += 2
+
+            t = round(t+t_bar,6)
+
+        Hessian = H.tocoo()
+        P.Hessian = Hessian
+        P.nnzh = len(Hessian.row)
+
+        return Hessian.data
+
+        """
+        data = zeros(P.nnzh, float_)
+        for i in range(P.nnzh):
+            data[i] = P.Hessian.data[i]
+        return data
+        """
+
 
