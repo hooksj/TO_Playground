@@ -49,6 +49,7 @@ def solve (p):
     P = p
     t0 = time.time()
 
+    eval_f(P.x)
     eval_jac_g(P.x, True)
     eval_jac_g(P.x, False)
 
@@ -56,13 +57,13 @@ def solve (p):
     nlp = pyipopt.create(P.nvar, P.x_L, P.x_U, P.ncon, P.g_L, P.g_U, P.nnjz, P.nnzh, eval_f, eval_grad_f, eval_g, eval_jac_g)
 
     # Set Ipopt solve options
-    nlp.int_option("print_level",1)
+    nlp.int_option("print_level",5)
     nlp.num_option("acceptable_tol",1.0)
     nlp.num_option("tol",10.0)
     nlp.num_option("dual_inf_tol",100.0)
     nlp.num_option("compl_inf_tol",100.0)
     nlp.int_option("max_iter", 100)
-    #nlp.str_option("derivative_test","first-order")
+    nlp.str_option("derivative_test","first-order")
 
     print "Calling solve"
 
@@ -135,10 +136,10 @@ def eval_grad_f(x, user_data = None):
         tb = t-tk
 
         index, values = P.ACost.derivative(tb, a_x, a_y, da_x, da_y)
-        grad_f[index] = values
+        grad_f[index] += values
 
         index, values = P.LCost.derivative(lam, dlam, C)
-        grad_f[index] = values
+        grad_f[index] += values
 
         t = round(t + P.tp/2.0,6)
 

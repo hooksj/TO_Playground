@@ -7,7 +7,7 @@ A class used to solve for a trajectory using ipopt.
 __author__  	= "Joshua Hooks"
 __email__   	= "hooksjrose@gmail.com"
 __copyright__ 	= "Copyright 2017 RoMeLa"
-__date__ 		= "Aug. 6th, 2018"
+__date__ 		= "Aug. 29th, 2018"
 
 __version__ 	= "0.1.0"
 __status__ 		= "Prototype"
@@ -96,6 +96,7 @@ class Structure(object):
         self.step_time = 0.0
         self.check_time = 0.0  # The time when the main thread should check if another trajectory has been generated
         self.heading = 0.0
+        self.time_vector = 0.0
 
         #### Constraints ####
         self.SCon = None
@@ -111,6 +112,8 @@ class Structure(object):
         self.step_height = 0.0  # height of step
 
         self.new = 1.0
+
+        self.nlp = None
 
         self.solved = False
 
@@ -160,6 +163,7 @@ class Structure(object):
         :return: X and Y polynomial coefficients and their indices in the optimized value array.
         """
         index_c = int(round(t/self.tp,6))*10 # determine which polynomial to be using
+    
         a_x = self.x[index_c:index_c+5]
         a_y = self.x[index_c+5:index_c+10]
         da_x = arange(index_c,index_c+5)
@@ -184,7 +188,7 @@ class Structure(object):
         return lam, dlam
 
 
-    def curr_f(self,t,shift=True):
+    def curr_f(self,t,opt=True):
         """
         Get the feet position and if they are on the ground or not for the specific time
     
@@ -197,105 +201,125 @@ class Structure(object):
 
         # Limb 1 trajectory
         index_t1 = searchsorted(self.T_F1,t)
+        P1 = self.F1.copy()
+        P1[1,:2] = self.x[self.wf1_index:self.wf2_index].reshape(2)
         if index_t1 % 2 == 0:
             c_f1 = 1.0
         else:
             c_f1 = 0.0
         index_f1 = index_t1/2
-        if c_f1:
-            f1 = self.F1[index_f1]
+        if c_f1 or opt:
+            f1 = P1[index_f1]
         else:
             s = (t-self.T_F1[index_t1-1])*2*pi/(self.T_F1[index_t1] - self.T_F1[index_t1-1])
-            f1_x = self.F1[index_f1+1][0] - self.F1[index_f1][0]
-            f1_y = self.F1[index_f1+1][1] - self.F1[index_f1][1]
-            f1_z = self.F1[index_f1+1][2] - self.F1[index_f1][2]
-            x_pos = self.F1[index_f1][0] + f1_x*(s-sin(s))/(2*pi)
-            y_pos = self.F1[index_f1][1] + f1_y*(s-sin(s))/(2*pi)
+            f1_x = P1[index_f1+1][0] - P1[index_f1][0]
+            f1_y = P1[index_f1+1][1] - P1[index_f1][1]
+            f1_z = P1[index_f1+1][2] - P1[index_f1][2]
+            x_pos = P1[index_f1][0] + f1_x*(s-sin(s))/(2*pi)
+            y_pos = P1[index_f1][1] + f1_y*(s-sin(s))/(2*pi)
             step_h1 = self.step_height
             if s < pi:
-                z_pos = self.F1[index_f1][2] + step_h1*(1-cos(s))/2.0
+                z_pos = P1[index_f1][2] + step_h1*(1-cos(s))/2.0
             else:
-                z_pos = self.F1[index_f1][2] + f1_z + (step_h1-f1_z)*(1-cos(s))/2.0
+                z_pos = P1[index_f1][2] + f1_z + (step_h1-f1_z)*(1-cos(s))/2.0
             f1 = array([x_pos, y_pos, z_pos])
-        df1 = array([self.wf1_index+2*index_f1, self.wf1_index+2*index_f1+1])
+        if index_f1 == 0:
+            df1 = array([None, None])
+        else:
+            df1 = array([self.wf1_index, self.wf1_index+1])
 
         # Limb 2 trajectory
         index_t2 = searchsorted(self.T_F2,t)
+        P2 = self.F2.copy()
+        P2[1,:2] = self.x[self.wf2_index:self.wf3_index].reshape(2)
         if index_t2 % 2 == 0:
             c_f2 = 1.0
         else:
             c_f2 = 0.0
         index_f2 = index_t2/2
-        if c_f2:
-            f2 = self.F2[index_f2]
+        if c_f2 or opt:
+            f2 = P2[index_f2]
         else:
             s = (t-self.T_F2[index_t2-1])*2*pi/(self.T_F2[index_t2] - self.T_F2[index_t2-1])
-            f2_x = self.F2[index_f2+1][0] - self.F2[index_f2][0]
-            f2_y = self.F2[index_f2+1][1] - self.F2[index_f2][1]
-            f2_z = self.F2[index_f2+1][2] - self.F2[index_f2][2]
-            x_pos = self.F2[index_f2][0] + f2_x*(s-sin(s))/(2*pi)
-            y_pos = self.F2[index_f2][1] + f2_y*(s-sin(s))/(2*pi)
+            f2_x = P2[index_f2+1][0] - P2[index_f2][0]
+            f2_y = P2[index_f2+1][1] - P2[index_f2][1]
+            f2_z = P2[index_f2+1][2] - P2[index_f2][2]
+            x_pos = P2[index_f2][0] + f2_x*(s-sin(s))/(2*pi)
+            y_pos = P2[index_f2][1] + f2_y*(s-sin(s))/(2*pi)
             step_h2 = self.step_height
             if s < pi:
-                z_pos = self.F2[index_f2][2] + step_h2*(1-cos(s))/2.0
+                z_pos = P2[index_f2][2] + step_h2*(1-cos(s))/2.0
             else:
-                z_pos = self.F2[index_f2][2] + f2_z + (step_h2-f2_z)*(1-cos(s))/2.0
+                z_pos = P2[index_f2][2] + f2_z + (step_h2-f2_z)*(1-cos(s))/2.0
             f2 = array([x_pos, y_pos, z_pos])
-        df2 = array([self.wf2_index+2*index_f2, self.wf2_index+2*index_f2+1])
+        if index_f2 == 0:
+            df2 = array([None, None])
+        else:
+            df2 = array([self.wf2_index, self.wf2_index+1])
 
         # Limb 3 trajectory
         index_t3 = searchsorted(self.T_F3,t)
+        P3 = self.F3.copy()
+        P3[1,:2] = self.x[self.wf3_index:self.wf4_index].reshape(2)
         if index_t3 % 2 == 0:
             c_f3 = 1.0
         else:
             c_f3 = 0.0
         index_f3 = index_t3/2
-        if c_f3:
-            f3 = self.F3[index_f3]
+        if c_f3 or opt:
+            f3 = P3[index_f3]
         else:
             s = (t-self.T_F3[index_t3-1])*2*pi/(self.T_F3[index_t3] - self.T_F3[index_t3-1])
-            f3_x = self.F3[index_f3+1][0] - self.F3[index_f3][0]
-            f3_y = self.F3[index_f3+1][1] - self.F3[index_f3][1]
-            f3_z = self.F3[index_f3+1][2] - self.F3[index_f3][2]
-            x_pos = self.F3[index_f3][0] + f3_x*(s-sin(s))/(2*pi)
-            y_pos = self.F3[index_f3][1] + f3_y*(s-sin(s))/(2*pi)
+            f3_x = P3[index_f3+1][0] - P3[index_f3][0]
+            f3_y = P3[index_f3+1][1] - P3[index_f3][1]
+            f3_z = P3[index_f3+1][2] - P3[index_f3][2]
+            x_pos = P3[index_f3][0] + f3_x*(s-sin(s))/(2*pi)
+            y_pos = P3[index_f3][1] + f3_y*(s-sin(s))/(2*pi)
             step_h3 = self.step_height
             if s < pi:
-                z_pos = self.F3[index_f3][2] + step_h3*(1-cos(s))/2.0
+                z_pos = P3[index_f3][2] + step_h3*(1-cos(s))/2.0
             else:
-                z_pos = self.F3[index_f3][2] + f3_z + (step_h3-f3_z)*(1-cos(s))/2.0
+                z_pos = P3[index_f3][2] + f3_z + (step_h3-f3_z)*(1-cos(s))/2.0
             f3 = array([x_pos, y_pos, z_pos])
-        df3 = array([self.wf3_index+2*index_f3, self.wf3_index+2*index_f3+1])
+        if index_f3 == 0:
+            df3 = array([None, None])
+        else:
+            df3 = array([self.wf3_index, self.wf3_index+1])
 
         # Limb 1 trajectory
         index_t4 = searchsorted(self.T_F4,t)
+        P4 = self.F4.copy()
+        P4[1,:2] = self.x[self.wf4_index:].reshape(2)
         if index_t4 % 2 == 0:
             c_f4 = 1.0
         else:
             c_f4 = 0.0
         index_f4 = index_t4/2
-        if c_f4:
-            f4 = self.F4[index_f4]
+        if c_f4 or opt:
+            f4 = P4[index_f4]
         else:
             s = (t-self.T_F4[index_t4-1])*2*pi/(self.T_F4[index_t4] - self.T_F4[index_t4-1])
-            f4_x = self.F4[index_f4+1][0] - self.F4[index_f4][0]
-            f4_y = self.F4[index_f4+1][1] - self.F4[index_f4][1]
-            f4_z = self.F4[index_f4+1][2] - self.F4[index_f4][2]
-            x_pos = self.F4[index_f4][0] + f4_x*(s-sin(s))/(2*pi)
-            y_pos = self.F4[index_f4][1] + f4_y*(s-sin(s))/(2*pi)
+            f4_x = P4[index_f4+1][0] - P4[index_f4][0]
+            f4_y = P4[index_f4+1][1] - P4[index_f4][1]
+            f4_z = P4[index_f4+1][2] - P4[index_f4][2]
+            x_pos = P4[index_f4][0] + f4_x*(s-sin(s))/(2*pi)
+            y_pos = P4[index_f4][1] + f4_y*(s-sin(s))/(2*pi)
             step_h4 = self.step_height
             if s < pi:
-                z_pos = self.F4[index_f4][2] + step_h4*(1-cos(s))/2.0
+                z_pos = P4[index_f4][2] + step_h4*(1-cos(s))/2.0
             else:
-                z_pos = self.F4[index_f4][2] + f4_z + (step_h4-f4_z)*(1-cos(s))/2.0
+                z_pos = P4[index_f4][2] + f4_z + (step_h4-f4_z)*(1-cos(s))/2.0
             f4 = array([x_pos, y_pos, z_pos])
-        df4 = array([self.wf4_index+2*index_f4, self.wf4_index+2*index_f4+1])
+        if index_f4 == 0:
+            df4 = array([None, None])
+        else:
+            df4 = array([self.wf4_index, self.wf4_index+1])
 
         F = array([f1,f2,f3,f4])
         C = array([c_f1,c_f2,c_f3,c_f4])
-        #Df = array([df1,df2,df3,df4])
-    
-        return F, C
+        Df = array([df1,df2,df3,df4])
+
+        return F, C, Df
 
 
     def curr_h(self,t):
@@ -322,115 +346,192 @@ class Structure(object):
         return h, ddh
 
 
-    def solve(self, initial_CM, initial_dCM, final_CM, final_dCM, TP, step_height, foot_constraint, warm_start=None):
+    def solve(self, initial_CM, initial_dCM, final_CM, final_dCM, TP, step_height, foot_constraint, search_boundary, warm_start=False):
 
-        self.step_height = step_height
-    
-        self.f1_x_nom = self.F1[0][0] - initial_CM[0]
-        self.f1_y_nom = self.F1[0][1] - initial_CM[1]
-    
-        self.f2_x_nom = self.F2[0][0] - initial_CM[0]
-        self.f2_y_nom = self.F2[0][1] - initial_CM[1]
-    
-        self.f3_x_nom = self.F3[0][0] - initial_CM[0]
-        self.f3_y_nom = self.F3[0][1] - initial_CM[1]
-    
-        self.f4_x_nom = self.F4[0][0] - initial_CM[0]
-        self.f4_y_nom = self.F4[0][1] - initial_CM[1]
+        if not warm_start:
 
-        foot_nominals = array([[self.f1_x_nom, self.f1_y_nom],
-                               [self.f2_x_nom, self.f2_y_nom],
-                               [self.f3_x_nom, self.f3_y_nom],
-                               [self.f4_x_nom, self.f4_y_nom]])
-    
-        self.CM_x_init = initial_CM[0]
-        self.CM_y_init = initial_CM[1]
-        self.dCM_x_init = initial_dCM[0]
-        self.dCM_y_init = initial_dCM[1]
+            self.step_height = step_height
 
-        self.CM_x_final = final_CM[0]
-        self.CM_y_final = final_CM[1]
-        self.dCM_x_final = final_dCM[0]
-        self.dCM_y_final = final_dCM[1]
+            self.f1_x_nom = self.F1[0][0] - initial_CM[0]
+            self.f1_y_nom = self.F1[0][1] - initial_CM[1]
 
-        self.tp = TP # Duration of polynomials
-        self.np = int(round(self.T/self.tp,3))+1 # number of polynomials
-    
-        wc = ones(5*2*self.np)*0.1
-        wu = ones(4*(2*self.np+1))*0.25
+            self.f2_x_nom = self.F2[0][0] - initial_CM[0]
+            self.f2_y_nom = self.F2[0][1] - initial_CM[1]
 
-        if warm_start != None:
-            wc[:len(warm_start[0])] = warm_start[0]
-            wu[:len(warm_start[1])] = warm_start[1]
-    
-        self.wu_index = len(wc)
-    
-        x0 = concatenate((wc,wu), axis=0)
-        
-        self.x = x0
+            self.f3_x_nom = self.F3[0][0] - initial_CM[0]
+            self.f3_y_nom = self.F3[0][1] - initial_CM[1]
 
-        self.SCon = StitchingConstraint(self.tp)
-        self.DCon = DynamicConstraint()
-        self.KCon = KinematicConstraint(foot_nominals, foot_constraint)
-        self.LCon = LoadConstraint()
+            self.f4_x_nom = self.F4[0][0] - initial_CM[0]
+            self.f4_y_nom = self.F4[0][1] - initial_CM[1]
 
-        acceleration_gain = 0.01
-        load_gain = 1.0
-        self.ACost = AccelerationCost(acceleration_gain)
-        self.LCost = LoadCost(load_gain)
-    
-        self.nnjz = (self.SCon.nnjz + 2*self.DCon.nnjz + self.KCon.nnjz + 2*self.LCon.nnjz)*(self.np-1)  # Number of non-zero values in the jacobian matrix
-        self.nvar = len(x0)  # Number of variables to solve for
-        self.nnzh = 0  # Not used because no Hessian was derive
-        self.ncon = (self.SCon.ncon + 2*self.DCon.ncon + self.KCon.ncon + 2*self.LCon.ncon)*(self.np-1)  # number of constraints
-    
-        # Upper and lower bounds on variables
-        self.x_L = ones((self.nvar), dtype=float_) * -2.0*pow(10.0, 19)
-        self.x_U = ones((self.nvar), dtype=float_) * 2.0*pow(10.0, 19)
-    
-        # Constrain load distribution between 0 and 1
-        self.x_L[self.wu_index:] = zeros(len(wu), dtype=float_)
-        self.x_U[self.wu_index:] = ones(len(wu), dtype=float_)
+            foot_nominals = array([[self.f1_x_nom, self.f1_y_nom],
+                                   [self.f2_x_nom, self.f2_y_nom],
+                                   [self.f3_x_nom, self.f3_y_nom],
+                                   [self.f4_x_nom, self.f4_y_nom]])
 
-        # Force the initial postion and velocity to be correct
-        self.x_L[0] = self.x_U[0] = initial_CM[0]
-        self.x_L[1] = self.x_U[1] = initial_dCM[0]
-        self.x_L[5] = self.x_U[5] = initial_CM[1]
-        self.x_L[6] = self.x_U[6] = initial_dCM[1]
-        self.x_L[-10+self.wu_index] = self.x_U[-10+self.wu_index] = final_CM[0]
-        self.x_L[-9+self.wu_index] = self.x_U[-9+self.wu_index] = final_dCM[0]
-        self.x_L[-5+self.wu_index] = self.x_U[-5+self.wu_index] = final_CM[1]
-        self.x_L[-4+self.wu_index] = self.x_U[-4+self.wu_index] = final_dCM[1]
+            self.CM_x_init = initial_CM[0]
+            self.CM_y_init = initial_CM[1]
+            self.dCM_x_init = initial_dCM[0]
+            self.dCM_y_init = initial_dCM[1]
+
+            self.CM_x_final = final_CM[0]
+            self.CM_y_final = final_CM[1]
+            self.dCM_x_final = final_dCM[0]
+            self.dCM_y_final = final_dCM[1]
+
+            self.tp = TP # Duration of polynomials
+            self.np = int(round(self.T/self.tp,3))+1 # number of polynomials
+
+            wc = ones(5*2*self.np)*0.1
+            wu = ones(4*(2*self.np+1))*0.25
+            wf1 = self.F1[1:,:2].reshape((len(self.F1)-1)*2)
+            wf2 = self.F2[1:,:2].reshape((len(self.F2)-1)*2)
+            wf3 = self.F3[1:,:2].reshape((len(self.F3)-1)*2)
+            wf4 = self.F4[1:,:2].reshape((len(self.F4)-1)*2)
+
+            self.wu_index = len(wc)
+            self.wf1_index = self.wu_index + len(wu)
+            self.wf2_index = self.wf1_index + len(wf1)
+            self.wf3_index = self.wf2_index + len(wf2)
+            self.wf4_index = self.wf3_index + len(wf3)
+
+            self.wu_index = len(wc)
+
+            x0 = concatenate((wc,wu,wf1,wf2,wf3,wf4), axis=0)
+
+            if not warm_start:
+                self.x = x0
+
+            #pdb.set_trace()
+
+            self.SCon = StitchingConstraint(self.tp)
+            self.DCon = DynamicConstraint()
+            self.KCon = KinematicConstraint(foot_nominals, foot_constraint)
+            self.LCon = LoadConstraint()
+
+            acceleration_gain = 0.01
+            load_gain = 1.0
+            self.ACost = AccelerationCost(acceleration_gain)
+            self.LCost = LoadCost(load_gain)
+
+            self.time_vector = linspace(0.0, round(self.T,6), self.np)
+
+            nnjz = 0
+            ncon = 0
+
+            for t in self.time_vector:
+                t = round(t,4)
+                t_bar = 0.0
+                a_x, a_y, da_x, da_y = self.curr_a(t)
+                a_x1, a_y1, da_x1, da_y1 = self.curr_a(round(t+self.tp,4))
+                F, C, dF = self.curr_f(t)
+                lam, dlam = self.curr_lam(t)
+                h, ddh = self.curr_h(t)
+
+                # Perform all 4 constraint checks at the beginning of the time period
+                if self.SCon.on:
+                    ncon += len(self.SCon.evaluate(a_x, a_x1, a_y, a_y1))
+                    nnjz += len(self.SCon.derivative())
+
+                if self.DCon.on:
+                    ncon += len(self.DCon.evaluate(t_bar, a_x, a_y, F, C, lam, h, ddh))
+                    nnjz += len(self.DCon.derivative(t_bar, F, dF, C, lam, h, ddh))
+
+                if self.KCon.on:
+                    ncon += len(self.KCon.evaluate(a_x, a_y, F, C))
+                    nnjz += len(self.KCon.derivative(C,dF))
+
+                if self.LCon.on:
+                    ncon += len(self.LCon.evaluate(lam))
+                    nnjz += len(self.LCon.derivative())
+
+                # Perform 2 constraint checks in the middle of the time period
+                t_bar = round(self.tp/2.0,4)
+                a_x, a_y, da_x, da_y = self.curr_a(round(t+t_bar,4))
+                F, C, dF = self.curr_f(round(t+t_bar,4))
+                lam, dlam = self.curr_lam(round(t+t_bar,4))
+                h, ddh = self.curr_h(round(t+t_bar,4))
+
+                if self.DCon.on:
+                    ncon += len(self.DCon.evaluate(t_bar, a_x, a_y, F, C, lam, h, ddh))
+                    nnjz += len(self.DCon.derivative(t_bar, F, dF, C, lam, h, ddh))
+
+                if self.LCon.on:
+                    ncon += len(self.LCon.evaluate(lam))
+                    nnjz += len(self.LCon.derivative())
+
+            self.nnjz = nnjz  # Number of non-zero values in the jacobian matrix
+            self.nvar = len(x0)  # Number of variables to solve for
+            self.nnzh = 0  # Not used because no Hessian was derive
+            self.ncon = ncon  # number of constraints
+
+            # Upper and lower bounds on variables
+            self.x_L = ones((self.nvar), dtype=float_) * -2.0*pow(10.0, 19)
+            self.x_U = ones((self.nvar), dtype=float_) * 2.0*pow(10.0, 19)
+
+             # Constrain load distribution between 0 and 1
+            self.x_L[self.wu_index:self.wf1_index] = zeros(len(wu), dtype=float_)
+            self.x_U[self.wu_index:self.wf1_index] = ones(len(wu), dtype=float_)
+
+            # Force the initial postion and velocity to be correct
+            self.x_L[0] = self.x_U[0] = initial_CM[0]
+            self.x_L[1] = self.x_U[1] = initial_dCM[0]
+            self.x_L[5] = self.x_U[5] = initial_CM[1]
+            self.x_L[6] = self.x_U[6] = initial_dCM[1]
+            self.x_L[-10+self.wu_index] = self.x_U[-10+self.wu_index] = final_CM[0]
+            self.x_L[-9+self.wu_index] = self.x_U[-9+self.wu_index] = final_dCM[0]
+            self.x_L[-5+self.wu_index] = self.x_U[-5+self.wu_index] = final_CM[1]
+            self.x_L[-4+self.wu_index] = self.x_U[-4+self.wu_index] = final_dCM[1]
+
+            # Upper and lower bounds on constraints
+            self.g_L = zeros(self.ncon)
+            self.g_U = zeros(self.ncon)
+
+            index = 0
+            for t in self.time_vector:
+                t = round(t,6)
+                _, C, _ = self.curr_f(t)
+                if self.SCon.on:
+                    self.g_L[index:index+self.SCon.ncon], self.g_U[index:index+self.SCon.ncon] = self.SCon.boundaries()
+                    index += self.SCon.ncon
+
+                if self.DCon.on:
+                    self.g_L[index:index+self.DCon.ncon], self.g_U[index:index+self.DCon.ncon] = self.DCon.boundaries()
+                    index += self.DCon.ncon
+
+                if self.KCon.on:
+                    self.g_L[index:index+self.KCon.ncon], self.g_U[index:index+self.KCon.ncon] = self.KCon.boundaries()
+                    index += self.KCon.ncon
+
+                if self.LCon.on:
+                    self.g_L[index:index+self.LCon.ncon], self.g_U[index:index+self.LCon.ncon] = self.LCon.boundaries(C)
+                    index += self.LCon.ncon
+
+                # Perform 2 constraint checks in the middle of the time period
+                t_bar = round(self.tp/2.0,6)
+                _, C, _ = self.curr_f(round(t+t_bar,6))
+                if self.DCon.on:
+                    self.g_L[index:index+self.DCon.ncon], self.g_U[index:index+self.DCon.ncon] = self.DCon.boundaries()
+                    index += self.DCon.ncon
+
+                if self.LCon.on:
+                    self.g_L[index:index+self.LCon.ncon], self.g_U[index:index+self.LCon.ncon] = self.LCon.boundaries(C)
+                    index += self.LCon.ncon
+
+        # Constrain the foot locations to be within a square around the nominal footstep
+        self.x_L[self.wf1_index:self.wf2_index] = self.F1[1,:2] - ones(2)*search_boundary
+        self.x_U[self.wf1_index:self.wf2_index] = self.F1[1,:2] + ones(2)*search_boundary
+
+        self.x_L[self.wf2_index:self.wf3_index] = self.F2[1,:2] - ones(2)*search_boundary
+        self.x_U[self.wf2_index:self.wf3_index] = self.F2[1,:2] + ones(2)*search_boundary
+
+        self.x_L[self.wf3_index:self.wf4_index] = self.F3[1,:2] - ones(2)*search_boundary
+        self.x_U[self.wf3_index:self.wf4_index] = self.F3[1,:2] + ones(2)*search_boundary
+
+        self.x_L[self.wf4_index:] = self.F4[1,:2] - ones(2)*search_boundary
+        self.x_U[self.wf4_index:] = self.F4[1,:2] + ones(2)*search_boundary
     
-        # Upper and lower bounds on constraints
-        self.g_L = zeros(self.ncon)
-        self.g_U = zeros(self.ncon)
-
-        t = 0.0
-        index = 0
-        for j in range(self.np-1):
-            _, C = self.curr_f(t)
-            self.g_L[index:index+self.SCon.ncon], self.g_U[index:index+self.SCon.ncon] = self.SCon.boundaries()
-            index += self.SCon.ncon
-            self.g_L[index:index+self.DCon.ncon], self.g_U[index:index+self.DCon.ncon] = self.DCon.boundaries()
-            index += self.DCon.ncon
-            self.g_L[index:index+self.KCon.ncon], self.g_U[index:index+self.KCon.ncon] = self.KCon.boundaries()
-            index += self.KCon.ncon
-            self.g_L[index:index+self.LCon.ncon], self.g_U[index:index+self.LCon.ncon] = self.LCon.boundaries(C)
-            index += self.LCon.ncon
-
-            # Perform 2 constraint checks in the middle of the time period
-            t_bar = round(self.tp/2.0,6)
-            t = round(t+t_bar,6)
-            _, C = self.curr_f(t)
-            self.g_L[index:index+self.DCon.ncon], self.g_U[index:index+self.DCon.ncon] = self.DCon.boundaries()
-            index += self.DCon.ncon
-            self.g_L[index:index+self.LCon.ncon], self.g_U[index:index+self.LCon.ncon] = self.LCon.boundaries(C)
-            index += self.LCon.ncon
-
-            t = round(t+t_bar,6)
-    
-        ipopt_problem.solve(self)
+        ipopt_problem.solve(self, warm_start)
 
 
     def plot_solution(self, trajectories = None):
@@ -440,7 +541,7 @@ class Structure(object):
         tk = 0.0
 
         lam, dlam = self.curr_lam(t[0])
-        F, C = self.curr_f(t[0])
+        F, C, _ = self.curr_f(t[0])
         a_x, a_y, da_x, da_y = self.curr_a(t[0])
 
         plt.ion()
@@ -481,7 +582,7 @@ class Structure(object):
                             break
                 if first:
                     lam, dlam = self.curr_lam(t[i])
-                    F, C = self.curr_f(t[i])
+                    F, C, _ = self.curr_f(t[i])
                     a_x, a_y, da_x, da_y = self.curr_a(t[i])
                     if t[i] >= tk + self.tp:
                         tk = tk + self.tp
@@ -698,6 +799,7 @@ class StitchingConstraint(Constraint):
 
         self.ncon = 4
         self.nnjz = 22
+        self.on = True
         self.T = array([1.0, tp, tp**2.0, tp**3.0, tp**4.0])
         self.dT = array([0.0, 1.0, 2.0*tp, 3.0*tp**2.0, 4.0*tp**3.0])
 
@@ -733,7 +835,8 @@ class DynamicConstraint(Constraint):
     def __init__(self):
 
         self.ncon = 2
-        self.nnjz = 18
+        self.nnjz = 26
+        self.on = True
 
     def evaluate(self, t_bar, a_x, a_y, F, C, lam, h, ddh):
         T = array([1.0, t_bar, t_bar**2.0, t_bar**3.0, t_bar**4.0])
@@ -748,32 +851,32 @@ class DynamicConstraint(Constraint):
         cm_ddy = dot(a_y,ddT)
         return array([cm_ddx - (g+ddh)*(cm_x - u_x)/h, cm_ddy - (g+ddh)*(cm_y - u_y)/h])
 
-    def derivative(self, t_bar, F, C, lam, h, ddh):
+    def derivative(self, t_bar, F, dF, C, lam, h, ddh):
         T = array([1.0, t_bar, t_bar**2.0, t_bar**3.0, t_bar**4.0])
         ddT = array([0.0, 0.0, 2.0, 6.0*t_bar, 12.0*t_bar**2.0])
-        return array([ddT[0]-T[0]*(g+ddh)/h,
-                      ddT[1]-T[1]*(g+ddh)/h,
-                      ddT[2]-T[2]*(g+ddh)/h,
-                      ddT[3]-T[3]*(g+ddh)/h,
-                      ddT[4]-T[4]*(g+ddh)/h,
-                      C[0]*F[0][0]*(g+ddh)/h,
-                      C[1]*F[1][0]*(g+ddh)/h,
-                      C[2]*F[2][0]*(g+ddh)/h,
-                      C[3]*F[3][0]*(g+ddh)/h,
-                      ddT[0]-T[0]*(g+ddh)/h,
-                      ddT[1]-T[1]*(g+ddh)/h,
-                      ddT[2]-T[2]*(g+ddh)/h,
-                      ddT[3]-T[3]*(g+ddh)/h,
-                      ddT[4]-T[4]*(g+ddh)/h,
-                      C[0]*F[0][1]*(g+ddh)/h,
-                      C[1]*F[1][1]*(g+ddh)/h,
-                      C[2]*F[2][1]*(g+ddh)/h,
-                      C[3]*F[3][1]*(g+ddh)/h
-                      ])
+        x_con = array([ddT[0]-T[0]*(g+ddh)/h, ddT[1]-T[1]*(g+ddh)/h, ddT[2]-T[2]*(g+ddh)/h, ddT[3]-T[3]*(g+ddh)/h, ddT[4]-T[4]*(g+ddh)/h,
+                      C[0]*F[0][0]*(g+ddh)/h, C[1]*F[1][0]*(g+ddh)/h, C[2]*F[2][0]*(g+ddh)/h, C[3]*F[3][0]*(g+ddh)/h])
+        y_con = array([ddT[0]-T[0]*(g+ddh)/h, ddT[1]-T[1]*(g+ddh)/h, ddT[2]-T[2]*(g+ddh)/h, ddT[3]-T[3]*(g+ddh)/h, ddT[4]-T[4]*(g+ddh)/h,
+                      C[0]*F[0][1]*(g+ddh)/h, C[1]*F[1][1]*(g+ddh)/h, C[2]*F[2][1]*(g+ddh)/h, C[3]*F[3][1]*(g+ddh)/h])
 
-    def derivative_structure(self, da_x, da_y, dlam):
-        col1 = concatenate((da_x, dlam))
-        col2 = concatenate((da_y, dlam))
+        fx_con = []
+        fy_con = []
+        for i in range(4):
+            if dF[i][0] != None:
+                fx_con.append(C[i]*lam[i]*(g+ddh)/h)
+                fy_con.append(C[i]*lam[i]*(g+ddh)/h)
+
+        return concatenate((x_con, fx_con, y_con, fy_con))
+
+    def derivative_structure(self, da_x, da_y, dlam, dF):
+        dfx = []
+        dfy = []
+        for i in range(4):
+            if dF[i][0] != None:
+                dfx.append(dF[i,0])
+                dfy.append(dF[i,1])
+        col1 = concatenate((da_x, dlam, dfx))
+        col2 = concatenate((da_y, dlam, dfy))
         return array([col1, col2])
 
     def boundaries(self):
@@ -785,7 +888,8 @@ class KinematicConstraint(Constraint):
     def __init__(self, f_initial, foot_boundary):
 
         self.ncon = 8
-        self.nnjz = 8
+        self.nnjz = 16
+        self.on = True
         self.f1_x_nom = f_initial[0][0]
         self.f1_y_nom = f_initial[0][1]
         self.f2_x_nom = f_initial[1][0]
@@ -807,19 +911,29 @@ class KinematicConstraint(Constraint):
                       C[3]*(F[3][1] - a_y[0] - self.f4_y_nom),
                       ])
 
-    def derivative(self, C):
-        return array([-C[0], -C[0], -C[1], -C[1], -C[2], -C[2], -C[3], -C[3]])
+    def derivative(self, C, dF):
+        val = []
+        for i in range(4):
+            if dF[i][0] != None:
+                val.append(C[i])
+                val.append(-C[i])
+                val.append(C[i])
+                val.append(-C[i])
+            else:
+                val.append(-C[i])
+                val.append(-C[i])
+        return val
 
-    def derivative_structure(self, da_x, da_y):
-        col1 = array([da_x[0]])
-        col2 = array([da_y[0]])
-        col3 = array([da_x[0]])
-        col4 = array([da_y[0]])
-        col5 = array([da_x[0]])
-        col6 = array([da_y[0]])
-        col7 = array([da_x[0]])
-        col8 = array([da_y[0]])
-        return array([col1, col2, col3, col4, col5, col6, col7, col8])
+    def derivative_structure(self, da_x, da_y, dF):
+        col = []
+        for i in range(4):
+            if dF[i][0] != None:
+                col.append(array([dF[i][0], da_x[0]]))
+                col.append(array([dF[i][1], da_x[0]]))
+            else:
+                col.append(array([da_x[0]]))
+                col.append(array([da_x[0]]))
+        return col
 
 
     def boundaries(self):
@@ -831,6 +945,7 @@ class LoadConstraint(Constraint):
     def __init__(self):
         self.ncon = 5
         self.nnjz = 8
+        self.on = True
 
     def evaluate(self, lam):
         return array([lam.sum(), lam[0], lam[1], lam[2], lam[3]])
@@ -854,6 +969,7 @@ class AccelerationCost(Cost):
 
     def __init__(self, gain):
         self.gain = gain
+        self.on = True
 
     def evaluate(self, t_bar, a_x, a_y):
         cm_acc_x_squared = 4.0*a_x[2]**2.0 + 36.0*a_x[3]**2.0*t_bar**2.0 + 144.0*a_x[4]**2.0*t_bar**4.0 + 24.0*a_x[2]*a_x[3]*t_bar + \
@@ -880,6 +996,7 @@ class LoadCost(Cost):
 
     def __init__(self, gain):
         self.gain = gain
+        self.on = True
 
     def evaluate(self, lam, C):
         n = C.sum()
@@ -901,7 +1018,7 @@ class LoadCost(Cost):
 class Creep(Structure):
 
     def __init__(self, initial_CM, initial_dCM, final_CM, final_dCM, initial_foot_pos, step_dis, step_time,
-                 step_height, height, start, direction, orientation, right, warm_start=None):
+                 step_height, height, start, direction, orientation, right, warm_start=False):
 
         self.T_H, self.T_F1, self.T_F2, self.T_F3, self.T_F4, self.sh_F1, self.sh_F2, self.sh_F3, self.sh_F4, self.F1, \
         self.F2, self.F3, self.F4, self.C_F1, self.C_F2, self.C_F3, self.C_F4,  self.H, self.num_steps \
@@ -923,40 +1040,38 @@ class Creep(Structure):
 if __name__ == '__main__':
     test = Structure()
 
-    test.T_F1 = array([0.5, 0.7, 1.3, 1.5])
-    test.F1 = array([[0.5, 0.0, 0.0],
-                     [0.6, 0.0, 0.0],
-                     [0.7, 0.0, 0.0]])
+    test.T_F1 = array([0.5, 0.7])
+    test.F1 = array([[0.5, 0.02, 0.0],
+                     [0.6, 0.0, 0.0]])
 
-    test.T_F2 = array([0.7, 0.9, 1.5, 1.7])
-    test.F2 = array([[0.5, 0.4, 0.0],
-                     [0.6, 0.4, 0.0],
-                     [0.7, 0.4, 0.0]])
+    test.T_F2 = array([0.7, 0.9])
+    test.F2 = array([[0.5, 0.38, 0.0],
+                     [0.6, 0.4, 0.0]])
 
-    test.T_F3 = array([0.9, 1.1, 1.7, 1.9])
+    test.T_F3 = array([0.9, 1.1])
     test.F3 = array([[0.0, 0.4, 0.0],
-                     [0.1, 0.4, 0.0],
-                     [0.2, 0.4, 0.0]])
+                     [0.1, 0.4, 0.0]])
 
-    test.T_F4 = array([1.1, 1.3, 1.9, 2.1])
+    test.T_F4 = array([1.1, 1.3])
     test.F4 = array([[0.0, 0.0, 0.0],
-                     [0.1, 0.0, 0.0],
-                     [0.2, 0.0, 0.0]])
-    test.T = 2.3
+                     [0.1, 0.0, 0.0]])
+    test.T = 1.6
 
-    test.T_H = array([0.5, 0.7, 0.9, 1.1, 1.3, 1.5, 1.7])
-    test.H =   array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+    test.T_H = array([0.5, 0.7, 0.9, 1.1, 1.3])
+    test.H =   array([0.5, 0.5, 0.5, 0.5, 0.5])
     test.step_height = 0.1
 
-    i_CM = array([0.25, 0.2])
-    i_dCM = array([0.0, 0.0])
+    i_CM = array([0.25, 0.22])
+    i_dCM = array([-0.1, 0.0])
     f_CM = array([0.45, 0.2])
     f_dCM = array([0.0, 0.0])
 
-    TP = 0.05
-    step_height = 0.1
+    TP = 0.1
+    step_height = 0.2
 
-    test.solve(i_CM, i_dCM, f_CM, f_dCM, TP, step_height, 0.5)
-    #test.plot_solution()
-    #pdb.set_trace()
+    test.solve(i_CM, i_dCM, f_CM, f_dCM, TP, step_height, 0.2, 0.1)
+    #test.solve(i_CM, i_dCM, f_CM, f_dCM, TP, step_height, 0.5, 0.02, True)
+    #test.solve(i_CM, i_dCM, f_CM, f_dCM, TP, step_height, 0.5, 0.03, True)
+    #test.solve(i_CM, i_dCM, f_CM, f_dCM, TP, step_height, 0.5, 0.2)
+    test.plot_solution()
 
